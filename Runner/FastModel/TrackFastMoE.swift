@@ -1241,9 +1241,9 @@ extension TrackFastMoEKernels {
     // runs a single gate+up walk pair over K instead of two serial row pairs;
     // the per-row fold order over k is unchanged, so act is bit-identical.
     static let gateUpReuseRowsPerSimdgroup = 1
-    // Thirty-two independent row owners share one threadgroup. This keeps the
-    // same total simdgroup count while reducing scheduling to twenty groups.
-    static let gateUpReuseSimdgroups = 32
+    // Sixteen independent row owners share one threadgroup. This keeps the
+    // same total simdgroup count while reducing scheduling to forty groups.
+    static let gateUpReuseSimdgroups = 16
 
     static let gateUpReuseHelpers = #"""
         template <typename T, int group_size, int bits, int rows>
@@ -1346,7 +1346,7 @@ extension TrackFastMoEKernels {
         """
 
     nonisolated(unsafe) static let gateUpReuseKernel = MLXFast.metalKernel(
-        name: "track_moe_gate_up_reuse_1row_32sg",
+        name: "track_moe_gate_up_reuse_1row_16sg",
         inputNames: ["wg", "sg", "bg", "wu", "su", "bu", "wsh", "ssh", "bsh", "x", "idx", "xrow"],
         outputNames: ["act"],
         source: gateUpReuseSource,
