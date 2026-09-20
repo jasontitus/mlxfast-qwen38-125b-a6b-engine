@@ -245,7 +245,6 @@ struct TrackPLE {
     let embedding: Qwen4ExpNGramEmbedding
     let keyProj: TrackProj
     let valueProj: TrackProj
-    let decodeProj: TrackMultiProj
     let normKeyScale: MLXArray
     let normQueryScale: MLXArray
     let normConvScale: MLXArray
@@ -498,13 +497,10 @@ public final class TrackQwen4ExpFastModel: Module, @unchecked Sendable {
         -> TrackPLE
     {
         let convW = ple.trackChild("conv1d").trackArray("weight")
-        let keyProj = TrackProj(ple.trackChild("key_proj"))
-        let valueProj = TrackProj(ple.trackChild("value_proj"))
         return TrackPLE(
             embedding: ple.pleEmbedding,
-            keyProj: keyProj,
-            valueProj: valueProj,
-            decodeProj: TrackMultiProj([keyProj, valueProj]),
+            keyProj: TrackProj(ple.trackChild("key_proj")),
+            valueProj: TrackProj(ple.trackChild("value_proj")),
             normKeyScale: ple.trackChild("norm_key").trackArray("weight"),
             normQueryScale: ple.trackChild("norm_query").trackArray("weight"),
             normConvScale: ple.trackChild("norm_conv").trackArray("weight"),
@@ -962,18 +958,10 @@ public final class TrackQwen4ExpFastModel: Module, @unchecked Sendable {
             TrackPleContextMirror.invalidate()
             embedded = p.embedding(ids, previousContext: devicePrevious()).asType(stream.dtype)
         }
-        // MLXFAST-PLEFUSE2: fuse the decode key/value projections, then prepare
-        // and convolution; every other shape takes the three-launch PLE block.
-        let keyFlat: MLXArray
-        let value: MLXArray
-        if S <= 8, p.decodeProj.fused != nil {
-            let projected = p.decodeProj.apply(embedded)
-            keyFlat = projected[.ellipsis, 0 ..< p.keyProj.rows]
-            value = projected[.ellipsis, p.keyProj.rows...]
-        } else {
-            keyFlat = p.keyProj.apply(embedded)
-            value = p.valueProj.apply(embedded)
-        }
+        // MLXFAST-PLEFUSE2: two unchanged GEMVs + prepare + convolution at S=1;
+        // every other shape takes the three-launch PLE block below.
+        let keyFlat = p.keyProj.apply(embedded)
+        let value = p.valueProj.apply(embedded)
         let fusedResidual = S == 1 && !capture && stream.dtype == .bfloat16
             && StreamOrDevice.default.stream === Stream.gpu
         let full: MLXArray
