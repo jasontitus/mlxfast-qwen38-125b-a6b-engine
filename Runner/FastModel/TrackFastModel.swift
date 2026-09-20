@@ -254,9 +254,6 @@ struct TrackPLE {
     let dilation: Int
     let stateLength: Int
     let stateLayerIndex: Int
-    /// Dtype accepted by the fixed-geometry PLE fusion, or nil when the
-    /// immutable layer weights do not match that geometry.
-    let fusionDType: DType?
 }
 
 struct TrackLayer {
@@ -499,37 +496,19 @@ public final class TrackQwen4ExpFastModel: Module, @unchecked Sendable {
     static func bindPLE(_ ple: Qwen4ExpPLELayer, ordinal: Int, cfg: Qwen4ExpTextConfiguration)
         -> TrackPLE
     {
-        let keyProj = TrackProj(ple.trackChild("key_proj"))
-        let valueProj = TrackProj(ple.trackChild("value_proj"))
-        let normKeyScale = ple.trackChild("norm_key").trackArray("weight")
-        let normQueryScale = ple.trackChild("norm_query").trackArray("weight")
-        let normConvScale = ple.trackChild("norm_conv").trackArray("weight")
         let convW = ple.trackChild("conv1d").trackArray("weight")
-        let dilation = cfg.ngramSize
-        let stateLength = (cfg.pleConvKernelSize - 1) * cfg.ngramSize
-        let dtype = convW.dtype
-        let fusionDType: DType? =
-            keyProj.rows == 10240 && valueProj.rows == 2560
-            && dilation == 3 && stateLength == 9
-            && convW.shape == [10240, 4, 1]
-            && normKeyScale.shape == [10240] && normKeyScale.dtype == dtype
-            && normQueryScale.shape == [10240] && normQueryScale.dtype == dtype
-            && normConvScale.shape == [10240] && normConvScale.dtype == dtype
-            && (dtype == .bfloat16 || dtype == .float16 || dtype == .float32)
-                ? dtype : nil
         return TrackPLE(
             embedding: ple.pleEmbedding,
-            keyProj: keyProj,
-            valueProj: valueProj,
-            normKeyScale: normKeyScale,
-            normQueryScale: normQueryScale,
-            normConvScale: normConvScale,
+            keyProj: TrackProj(ple.trackChild("key_proj")),
+            valueProj: TrackProj(ple.trackChild("value_proj")),
+            normKeyScale: ple.trackChild("norm_key").trackArray("weight"),
+            normQueryScale: ple.trackChild("norm_query").trackArray("weight"),
+            normConvScale: ple.trackChild("norm_conv").trackArray("weight"),
             convW: convW,
             convW2: convW.reshaped(convW.dim(0), convW.dim(1)),
-            dilation: dilation,
-            stateLength: stateLength,
-            stateLayerIndex: cfg.pleStateLayerIndex(ordinal: ordinal),
-            fusionDType: fusionDType)
+            dilation: cfg.ngramSize,
+            stateLength: (cfg.pleConvKernelSize - 1) * cfg.ngramSize,
+            stateLayerIndex: cfg.pleStateLayerIndex(ordinal: ordinal))
     }
 
     static func bind(layer: Qwen4ExpDecoderLayer, index: Int, cfg: Qwen4ExpTextConfiguration)
