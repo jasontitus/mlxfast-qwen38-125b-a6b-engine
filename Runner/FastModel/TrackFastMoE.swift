@@ -1423,31 +1423,34 @@ extension TrackFastMoEKernels {
                 }
             }
         }
-        // Shared expert down rows d0..d0+3 for token t: one token routes to `qmv`'s
-        // normal branch (K = 640), two to eight to `qmv_wide` (full tiles; a row's
-        // walk does not depend on how many vectors share its tile).
+        // The one-token path gives each shared-expert output row its own SIMD
+        // group. That preserves the row's qmv walk and reduction while avoiding
+        // a second independent row accumulator on the barrier's critical path.
         constexpr uint shared_sg = VPT == 1 && K == 10 && KSG >= 5
             ? (uint)KSG : (KSG > K ? (uint)K : 0u);
-        if (sgi == shared_sg) {
-            const device T* xs = act + (size_t)(BR + t) * (size_t)F;
-            if constexpr (VPT == 1) {
-                float rs[RPS];
-                qmv_reg<T, GS, BITS, (F % get_pack_factor<BITS, 32>()) == 0, RPS>(wsd, ssd, bsd, xs, F, d0, lid, rs);
-                // MLXFAST-STAGELANES: same argument as the routed staging above —
-                // `rs` is post-`simd_sum`, so the RPS entries are identical on
-                // every lane and each can be stored by its own lane.
-                if constexpr (RPS <= 32) {
-                    if (lid < RPS) { shvT[lid] = static_cast<float>(static_cast<T>(rs[lid])); }
-                } else {
-                    if (lid == 0) { for (int i = 0; i < RPS; ++i) { shvT[i] = static_cast<float>(static_cast<T>(rs[i])); } }
+        const device T* xs = act + (size_t)(BR + t) * (size_t)F;
+        if constexpr (VPT == 1 && K == 10 && KSG >= 5) {
+            if (sgi >= shared_sg && sgi < shared_sg + RPS) {
+                const int i = (int)(sgi - shared_sg);
+                float rs[1];
+                qmv_reg<T, GS, BITS, (F % get_pack_factor<BITS, 32>()) == 0, 1>(
+                    wsd, ssd, bsd, xs, F, d0 + i, lid, rs);
+                if (lid == 0) {
+                    shvT[i] = static_cast<float>(static_cast<T>(rs[0]));
                 }
-            } else {
-                float rw[1];
-                qmv_wide_reg_full<T, GS, BITS, 1, 8, false>(wsd, ssd, bsd, xs, F, 1, d0 + (int)(lid / 8), lid, rw);
-                // The shuffles must run with the whole simdgroup active.
-                float sh4[4];
-                for (int i = 0; i < 4; ++i) { sh4[i] = static_cast<float>(static_cast<T>(simd_shuffle(rw[0], (ushort)(i * 8)))); }
-                if (lid == 0) { for (int i = 0; i < 4; ++i) { shvT[i] = sh4[i]; } }
+            }
+        } else if (sgi == shared_sg) {
+            float rw[1];
+            qmv_wide_reg_full<T, GS, BITS, 1, 8, false>(
+                wsd, ssd, bsd, xs, F, 1, d0 + (int)(lid / 8), lid, rw);
+            // The shuffles must run with the whole simdgroup active.
+            float sh4[4];
+            for (int i = 0; i < 4; ++i) {
+                sh4[i] = static_cast<float>(
+                    static_cast<T>(simd_shuffle(rw[0], (ushort)(i * 8))));
+            }
+            if (lid == 0) {
+                for (int i = 0; i < 4; ++i) { shvT[i] = sh4[i]; }
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -1521,7 +1524,7 @@ extension TrackFastMoEKernels {
         precondition(act.dim(0) == BR + S && gate.dim(0) == S && sharedDown.rows == H && !isFast(k: F, n: H))
         let ksg = topK % downCombineSimdgroups == 0 ? downCombineSimdgroups : 1
         let rps = S == 1 ? downRowsPerSimdgroup : 4
-        let groups = ksg + (S == 1 && topK == 10 && ksg >= 5 ? 1 : 0)
+        let groups = ksg + (S == 1 && topK == 10 && ksg >= 5 ? rps : 0)
         return (S == 1 ? downCombineKernel1 : downCombineKernel)(
             [wd, sd, bd, sharedDown.weight, sharedDown.scales, sharedDown.biases!, act, idx, w, gate],
             template: [("T", act.dtype), ("GS", groupSize), ("BITS", bits), ("H", H), ("F", F), ("K", topK), ("FAST", isFast(k: F, n: H)), ("BR", BR), ("VPT", S), ("KSG", ksg), ("RPS", rps)],
@@ -2198,7 +2201,7 @@ extension TrackFastMoEKernels {
 
 extension TrackFastMoEKernels {
     static let routerGemvSource = """
-        constexpr int TM = RPS, TN = 4, SN = 32, blockM = SGPTG * RPS, blockN = 128;
+        constexpr int TM = RPS, TN = 4, SN = 32, blockM = 4 * RPS, blockN = 128;
         const int tid_x = (int)threadgroup_position_in_grid.x;
         const int simd_gid = (int)simdgroup_index_in_threadgroup;
         const int simd_lid = (int)thread_index_in_simdgroup;
@@ -2246,16 +2249,11 @@ extension TrackFastMoEKernels {
         let K = w.dim(1), N = w.dim(0)
         precondition(x.dtype == .float32 && x.size == K && w.dtype == .bfloat16)
         precondition(K % 128 == 0 && K > 64 && K < 16 * N && N % 16 == 0 && N < 4096)
-        let rowsPerSimdgroup = K == 2560 && N == 512 ? 2 : 4
-        let simdgroupsPerThreadgroup = K == 2560 && N == 512 ? 8 : 4
+        let rowsPerSimdgroup = K == 2560 && N == 512 ? 1 : 4  // MLXFAST-ROUTERRPS1
         return routerGemvKernel(
             [x.reshaped(K), w],
-            template: [
-                ("T", w.dtype), ("K", K), ("N", N), ("RPS", rowsPerSimdgroup),
-                ("SGPTG", simdgroupsPerThreadgroup),
-            ],
-            grid: (32 * (N / (simdgroupsPerThreadgroup * rowsPerSimdgroup)), 1, simdgroupsPerThreadgroup),
-            threadGroup: (32, 1, simdgroupsPerThreadgroup),
+            template: [("T", w.dtype), ("K", K), ("N", N), ("RPS", rowsPerSimdgroup)],
+            grid: (32 * (N / (4 * rowsPerSimdgroup)), 1, 4), threadGroup: (32, 1, 4),
             outputShapes: [[N]], outputDTypes: [.float32])[0]
     }
 }
