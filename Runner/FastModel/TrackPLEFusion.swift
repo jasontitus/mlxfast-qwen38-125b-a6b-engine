@@ -214,24 +214,13 @@ enum TrackPLEFusion {
             && p.normConvScale.dtype == dtype
     }
 
-    private static let targetEpsBits = Int(Float(1e-6).bitPattern)
-    private static let divisorBits = Int(Foundation.sqrt(Float(2560)).bitPattern)
-    nonisolated(unsafe) private static let bf16Templates: [(String, any KernelTemplateArg)] = [
-        ("InT", DType.bfloat16),
-        ("EPS_BITS", targetEpsBits),
-        ("DIVISOR_BITS", divisorBits),
-    ]
-
     private static func prepareTemplates(dtype: DType, eps: Float)
         -> [(String, any KernelTemplateArg)]
     {
-        if dtype == .bfloat16 && Int(eps.bitPattern) == targetEpsBits {
-            return bf16Templates
-        }
-        return [
+        [
             ("InT", dtype),
             ("EPS_BITS", Int(eps.bitPattern)),
-            ("DIVISOR_BITS", divisorBits),
+            ("DIVISOR_BITS", Int(Foundation.sqrt(Float(2560)).bitPattern)),
         ]
     }
 
@@ -239,8 +228,7 @@ enum TrackPLEFusion {
         _ p: TrackPLE, key: MLXArray, value: MLXArray, stream: MLXArray,
         convState: MLXArray, eps: Float, fusedResidual: Bool
     ) -> (full: MLXArray, output: MLXArray, residualAdded: Bool)? {
-        guard key.ndim == 3 && key.dim(0) == 1 && key.dim(1) == 1 && key.dim(2) == 10240,
-            value.ndim == 3 && value.dim(0) == 1 && value.dim(1) == 1 && value.dim(2) == 2560,
+        guard key.shape == [1, 1, 10240], value.shape == [1, 1, 2560],
             key.dtype == stream.dtype, value.dtype == stream.dtype
         else { return nil }
         if fusedResidual {
