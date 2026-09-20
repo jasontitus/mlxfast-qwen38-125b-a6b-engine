@@ -241,8 +241,137 @@ struct TrackMoE {
     let sharedHidden: Int
 }
 
+/// Host constants for the PLE n-gram hash. The upstream helper materializes
+/// these MLX constants as Swift arrays on every token; bind them once instead.
+struct TrackPLEHostHash {
+    let ngramSize: Int
+    let headsPerNGram: Int
+    let eos: Int64
+    let multipliers: [Int64]
+    let sizes: [Int64]
+    let offsets: [Int64]
+
+    init(cfg: Qwen4ExpTextConfiguration, ordinal: Int) {
+        ngramSize = cfg.ngramSize
+        headsPerNGram = cfg.headsPerNGram
+        eos = Int64(cfg.eosTokenId)
+
+        let headCount = (cfg.ngramSize - 1) * cfg.headsPerNGram
+        var sizes: [Int64] = []
+        var offsets: [Int64] = []
+        sizes.reserveCapacity(headCount)
+        offsets.reserveCapacity(headCount)
+        var total = 0
+        for head in 0 ..< headCount {
+            let global = ordinal * headCount + head
+            let size = Self.nthPrimeAfter(cfg.ngramVocabSizeBase - 1, count: global + 1)
+            sizes.append(Int64(size))
+            offsets.append(Int64(total))
+            total += size
+        }
+        self.sizes = sizes
+        self.offsets = offsets
+
+        let gamma: UInt64 = 0x9E37_79B9_7F4A_7C15
+        let maxLong = UInt64(Int64.max)
+        let half = max(
+            UInt64(1), (maxLong / UInt64(max(cfg.vocabularySize, 1))) / 2)
+        let baseSeed = UInt64(bitPattern: Int64(cfg.seed)) &+ (10007 &* UInt64(ordinal))
+        multipliers = (0 ..< cfg.ngramSize).map { i in
+            let mixed = Self.splitmix64(baseSeed &+ (gamma &* UInt64(i + 1)))
+            return Int64(2 &* (mixed % half) &+ 1)
+        }
+    }
+
+    func rowIds(history: [Int64], newCount: Int) -> [Int] {
+        let count = (ngramSize - 1) * headsPerNGram
+        var out: [Int] = []
+        out.reserveCapacity(newCount * count)
+        if ngramSize == 3, newCount == 1, history.count == 3 {
+            let pair = (history[2] &* multipliers[0]) ^ (history[1] &* multipliers[1])
+            for head in 0 ..< headsPerNGram {
+                var remainder = pair % sizes[head]
+                if remainder != 0, (remainder < 0) != (sizes[head] < 0) {
+                    remainder += sizes[head]
+                }
+                out.append(Int(remainder + offsets[head]))
+            }
+
+            let oldest = history[1] == eos ? eos : history[0]
+            let triplet = pair ^ (oldest &* multipliers[2])
+            for head in headsPerNGram ..< 2 * headsPerNGram {
+                var remainder = triplet % sizes[head]
+                if remainder != 0, (remainder < 0) != (sizes[head] < 0) {
+                    remainder += sizes[head]
+                }
+                out.append(Int(remainder + offsets[head]))
+            }
+            return out
+        }
+
+        let T = history.count
+        var previous = [Int](repeating: -1, count: T)
+        var last = -1
+        for t in 0 ..< T {
+            previous[t] = last
+            if history[t] == eos { last = t }
+        }
+        func shifted(_ shift: Int, _ t: Int) -> Int64 {
+            if shift == 0 { return history[t] }
+            let inSegment = t - (previous[t] + 1)
+            let source = t - shift
+            return (inSegment >= shift && source >= 0) ? history[source] : eos
+        }
+        for t in Swift.max(0, T - newCount) ..< T {
+            for ngram in 2 ... ngramSize {
+                var mixed = shifted(0, t) &* multipliers[0]
+                for p in 1 ..< ngram {
+                    mixed ^= shifted(p, t) &* multipliers[p]
+                }
+                let low = (ngram - 2) * headsPerNGram
+                for head in low ..< low + headsPerNGram {
+                    var remainder = mixed % sizes[head]
+                    if remainder != 0, (remainder < 0) != (sizes[head] < 0) {
+                        remainder += sizes[head]
+                    }
+                    out.append(Int(remainder + offsets[head]))
+                }
+            }
+        }
+        return out
+    }
+
+    private static func splitmix64(_ value: UInt64) -> UInt64 {
+        var v = value &+ 0x9E37_79B9_7F4A_7C15
+        v = (v ^ (v >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        v = (v ^ (v >> 27)) &* 0x94D0_49BB_1331_11EB
+        return v ^ (v >> 31)
+    }
+
+    private static func nthPrimeAfter(_ start: Int, count: Int) -> Int {
+        var prime = start
+        for _ in 0 ..< count {
+            prime += 1
+            while !isPrime(prime) { prime += 1 }
+        }
+        return prime
+    }
+
+    private static func isPrime(_ value: Int) -> Bool {
+        if value < 2 { return false }
+        if value % 2 == 0 { return value == 2 }
+        var divisor = 3
+        while divisor * divisor <= value {
+            if value % divisor == 0 { return false }
+            divisor += 2
+        }
+        return true
+    }
+}
+
 struct TrackPLE {
     let embedding: Qwen4ExpNGramEmbedding
+    let hostHash: TrackPLEHostHash
     let keyProj: TrackProj
     let valueProj: TrackProj
     let normKeyScale: MLXArray
@@ -499,6 +628,7 @@ public final class TrackQwen4ExpFastModel: Module, @unchecked Sendable {
         let convW = ple.trackChild("conv1d").trackArray("weight")
         return TrackPLE(
             embedding: ple.pleEmbedding,
+            hostHash: TrackPLEHostHash(cfg: cfg, ordinal: ordinal),
             keyProj: TrackProj(ple.trackChild("key_proj")),
             valueProj: TrackProj(ple.trackChild("value_proj")),
             normKeyScale: ple.trackChild("norm_key").trackArray("weight"),
@@ -950,7 +1080,7 @@ public final class TrackQwen4ExpFastModel: Module, @unchecked Sendable {
                     Array(history.suffix(contextLength)), nextOffset: offset + S,
                     stateLayerIndex: p.stateLayerIndex, contextLength: contextLength)
             }
-            let gid = p.embedding.hostRowIds(history: [history], newCount: S)
+            let gid = p.hostHash.rowIds(history: history, newCount: S)
             let rows = host.rows(globalIds: gid, shape: [B, S, (cfg.ngramSize - 1) * cfg.headsPerNGram])
             embedded = rows.reshaped(B, S, -1).asType(stream.dtype)
             hostHistory = history
