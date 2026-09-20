@@ -96,13 +96,10 @@ enum TrackPLEFusion {
         }
         // Same [old nine rows, new row] layout as concatenated. State staging
         // keeps its existing tail view, including capture/rollback behavior.
-        using InT4 = metal::vec<InT, 4>;
         for (uint t = 0; t < 9; ++t) {
-            const device InT4* src =
-                reinterpret_cast<const device InT4*>(convState + t * W + base);
-            device InT4* dst =
-                reinterpret_cast<device InT4*>(full + t * W + base);
-            *dst = *src;
+            for (uint i = 0; i < 4; ++i) {
+                full[t * W + base + i] = convState[t * W + base + i];
+            }
         }
         """
 
