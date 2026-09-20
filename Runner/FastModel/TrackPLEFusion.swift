@@ -221,7 +221,8 @@ enum TrackPLEFusion {
         [
             ("InT", dtype),
             ("EPS_BITS", Int(eps.bitPattern)),
-            ("DIVISOR_BITS", Int(Foundation.sqrt(Float(2560)).bitPattern)),
+            // Float(2560).squareRoot().bitPattern, fixed by the fused geometry.
+            ("DIVISOR_BITS", 1_112_171_202),
         ]
     }
 
