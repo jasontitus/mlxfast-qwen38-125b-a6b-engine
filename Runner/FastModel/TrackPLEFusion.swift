@@ -12,6 +12,7 @@ enum TrackPLEFusion {
         METAL_FUNC float ple_row_sum(
             float acc, threadgroup float* partials, uint lane, uint sg) {
             acc = simd_sum(acc);
+            if (sg == 0 && lane >= 20) { partials[lane] = 0.0f; }
             if (lane == 0) { partials[sg] = acc; }
             threadgroup_barrier(mem_flags::mem_threadgroup);
             acc = simd_sum(partials[lane]);
@@ -32,7 +33,6 @@ enum TrackPLEFusion {
         const uint d = lid * 4;
         const uint base = hc * H + d;
         threadgroup float partials[32];  // 128 B total, reused throughout.
-        if (sg == 0 && lane >= 20) { partials[lane] = 0.0f; }
         const float eps = as_type<float>((uint)EPS_BITS);
 
         // Reload the four key/query elements after their norms instead of
@@ -65,6 +65,7 @@ enum TrackPLEFusion {
         }
         dot = InT(0) + dot;
         dot = simd_sum(dot);
+        if (sg == 0 && lane >= 20) { partials[lane] = 0.0f; }
         if (lane == 0) { partials[sg] = float(dot); }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         dot = simd_sum(InT(partials[lane]));
@@ -177,7 +178,7 @@ enum TrackPLEFusion {
         """
 
     static let prepareKernel = MLXFast.metalKernel(
-        name: "track_ple_prepare_fuse2_zero_once",
+        name: "track_ple_prepare_fuse2",
         inputNames: ["key", "query", "value", "keyScale", "queryScale", "convScale", "convState"],
         outputNames: ["gated", "full"], source: prepareSource,
         header: TrackFastKernels.exactHeader + header, ensureRowContiguous: true)
@@ -188,7 +189,7 @@ enum TrackPLEFusion {
         header: TrackFastKernels.exactHeader, ensureRowContiguous: true)
 
     static let fusedPrepareKernel = MLXFast.metalKernel(
-        name: "track_ple_prepare_conv_fused2_residual_zero_once",
+        name: "track_ple_prepare_conv_fused2_residual",
         inputNames: ["key", "query", "value", "keyScale", "queryScale", "convScale", "convState", "convW"],
         outputNames: ["full", "added"], source: fusedPrepareSource,
         header: TrackFastKernels.exactHeader + header, ensureRowContiguous: true)
