@@ -109,20 +109,23 @@ enum TrackPLEFusion {
         return pieces[0] + new + pieces[1]
     }
 
-    // The fused prepare keeps the checked source and changes only its final epilogue.
+    // The fused prepare keeps the checked source and changes only its final
+    // epilogue and the returned state layout. It returns the nine rows the next
+    // decode step needs directly, instead of materializing ten rows and slicing
+    // away the oldest row.
     private static let fusedPrepareSource: String = {
-        let old = """
+        let oldEpilogue = """
         for (uint i = 0; i < 4; ++i) {
             InT n = InT(float(g[i]) * iv);
             full[9 * W + base + i] = n * convScale[base + i];
         }
         """
-        let new = """
+        let newEpilogue = """
         for (uint i = 0; i < 4; ++i) {
             const uint c = base + i;
             InT n = InT(float(g[i]) * iv);
             const InT newest = n * convScale[c];
-            full[9 * W + c] = newest;
+            full[8 * W + c] = newest;
 
             float acc = 0.0f;
             {
@@ -144,9 +147,24 @@ enum TrackPLEFusion {
             added[c] = query[c] + pleDelta;
         }
         """
+        let oldStateCopy = """
+        for (uint t = 0; t < 9; ++t) {
+            for (uint i = 0; i < 4; ++i) {
+                full[t * W + base + i] = convState[t * W + base + i];
+            }
+        }
+        """
+        let newStateCopy = """
+        for (uint t = 0; t < 8; ++t) {
+            for (uint i = 0; i < 4; ++i) {
+                full[t * W + base + i] = convState[(t + 1) * W + base + i];
+            }
+        }
+        """
         let withoutGated = replaceOnce(
             prepareSource, "    gated[base + i] = g[i];\n", "")
-        return replaceOnce(withoutGated, old, new)
+        let withEpilogue = replaceOnce(withoutGated, oldEpilogue, newEpilogue)
+        return replaceOnce(withEpilogue, oldStateCopy, newStateCopy)
     }()
 
     static let convolutionSource = """
@@ -229,7 +247,7 @@ enum TrackPLEFusion {
                  p.normConvScale, convState, p.convW],
                 template: prepareTemplates(dtype: stream.dtype, eps: eps),
                 grid: (640, 4, 1), threadGroup: (640, 1, 1),
-                outputShapes: [[1, 10, 10240], [1, 1, 10240]],
+                outputShapes: [[1, 9, 10240], [1, 1, 10240]],
                 outputDTypes: [stream.dtype, stream.dtype])
             return (r[0], r[1], true)
         }
