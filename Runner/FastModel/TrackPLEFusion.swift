@@ -228,7 +228,8 @@ enum TrackPLEFusion {
         _ p: TrackPLE, key: MLXArray, value: MLXArray, stream: MLXArray,
         convState: MLXArray, eps: Float, fusedResidual: Bool
     ) -> (full: MLXArray, output: MLXArray, residualAdded: Bool)? {
-        guard key.shape == [1, 1, 10240], value.shape == [1, 1, 2560],
+        guard key.ndim == 3 && key.dim(0) == 1 && key.dim(1) == 1 && key.dim(2) == 10240,
+            value.ndim == 3 && value.dim(0) == 1 && value.dim(1) == 1 && value.dim(2) == 2560,
             key.dtype == stream.dtype, value.dtype == stream.dtype
         else { return nil }
         if fusedResidual {
