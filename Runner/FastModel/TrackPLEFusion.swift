@@ -194,7 +194,6 @@ enum TrackPLEFusion {
         outputNames: ["full", "added"], source: fusedPrepareSource,
         header: TrackFastKernels.exactHeader + header, ensureRowContiguous: true)
 
-    @inline(__always)
     static func supports(_ p: TrackPLE, stream: MLXArray, hidden: Int, hcCount: Int) -> Bool {
         // This predicate runs once per decode token. Avoid constructing shape
         // and membership arrays for the fixed geometry checks.
