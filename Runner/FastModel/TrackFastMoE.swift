@@ -1241,9 +1241,9 @@ extension TrackFastMoEKernels {
     // runs a single gate+up walk pair over K instead of two serial row pairs;
     // the per-row fold order over k is unchanged, so act is bit-identical.
     static let gateUpReuseRowsPerSimdgroup = 1
-    // Four independent row owners share one threadgroup. This keeps the same
-    // total simdgroup count while halving threadgroup scheduling granularity.
-    static let gateUpReuseSimdgroups = 4
+    // Eight independent row owners share one threadgroup. This keeps the same
+    // total simdgroup count while quartering threadgroup scheduling granularity.
+    static let gateUpReuseSimdgroups = 8
 
     static let gateUpReuseHelpers = #"""
         template <typename T, int group_size, int bits, int rows>
@@ -1328,8 +1328,8 @@ extension TrackFastMoEKernels {
         const device uint32_t* uw = shared ? wsh + (size_t)N * kw : wu + eoff * kw;
         const device T* us = shared ? ssh + (size_t)N * kg : su + eoff * kg;
         const device T* ub = shared ? bsh + (size_t)N * kg : bu + eoff * kg;
-        // RPS output rows per simdgroup. Packing four independent row owners
-        // changes only threadgroup scheduling; each group retains its row walk.
+        // RPS output rows per simdgroup. Packing independent row owners changes
+        // only threadgroup scheduling; each group retains its complete row walk.
         const int out_row = (int)threadgroup_position_in_grid.y * (SGS * RPS)
             + (int)simdgroup_index_in_threadgroup * RPS;
         float g[RPS], u[RPS];
@@ -1346,7 +1346,7 @@ extension TrackFastMoEKernels {
         """
 
     nonisolated(unsafe) static let gateUpReuseKernel = MLXFast.metalKernel(
-        name: "track_moe_gate_up_reuse_1row_4sg",
+        name: "track_moe_gate_up_reuse_1row_8sg",
         inputNames: ["wg", "sg", "bg", "wu", "su", "bu", "wsh", "ssh", "bsh", "x", "idx", "xrow"],
         outputNames: ["act"],
         source: gateUpReuseSource,
