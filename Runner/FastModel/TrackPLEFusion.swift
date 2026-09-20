@@ -198,7 +198,8 @@ enum TrackPLEFusion {
         // Weight geometry is immutable, so bind its full check once at model
         // construction instead of repeating it for every decode token.
         hidden == 2560 && hcCount == 4 && p.fusionDType == stream.dtype
-            && stream.shape == [1, 1, 10240]
+            && stream.ndim == 3 && stream.dim(0) == 1 && stream.dim(1) == 1
+            && stream.dim(2) == 10240
     }
 
     private static func prepareTemplates(dtype: DType, eps: Float)
