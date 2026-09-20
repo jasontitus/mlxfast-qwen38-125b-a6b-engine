@@ -14,6 +14,7 @@ enum TrackPLEFusion {
             float acc0, float acc1, threadgroup float* partials, uint lane, uint sg) {
             acc0 = simd_sum(acc0);
             acc1 = simd_sum(acc1);
+            if (sg == 0 && lane >= 20) { partials[lane] = 0.0f; }
             if (lane == 0) {
                 partials[sg] = acc0;
                 partials[sg + 10] = acc1;
@@ -40,7 +41,6 @@ enum TrackPLEFusion {
         const uint base0 = hc * H + d0;
         const uint base1 = hc * H + d1;
         threadgroup float partials[32];  // 128 B total, reused throughout.
-        if (sg == 0 && lane >= 20) { partials[lane] = 0.0f; }
         const float eps = as_type<float>((uint)EPS_BITS);
 
         float acc0 = 0.0f;
@@ -86,6 +86,7 @@ enum TrackPLEFusion {
         dot1 = InT(0) + dot1;
         dot0 = simd_sum(dot0);
         dot1 = simd_sum(dot1);
+        if (sg == 0 && lane >= 20) { partials[lane] = 0.0f; }
         if (lane == 0) {
             partials[sg] = float(dot0);
             partials[sg + 10] = float(dot1);
@@ -226,7 +227,7 @@ enum TrackPLEFusion {
         """
 
     static let prepareKernel = MLXFast.metalKernel(
-        name: "track_ple_prepare_fuse2_pair_zero_once",
+        name: "track_ple_prepare_fuse2_pair",
         inputNames: ["key", "query", "value", "keyScale", "queryScale", "convScale", "convState"],
         outputNames: ["gated", "full"], source: prepareSource,
         header: TrackFastKernels.exactHeader + header, ensureRowContiguous: true)
@@ -237,7 +238,7 @@ enum TrackPLEFusion {
         header: TrackFastKernels.exactHeader, ensureRowContiguous: true)
 
     static let fusedPrepareKernel = MLXFast.metalKernel(
-        name: "track_ple_prepare_conv_fused2_residual_pair_zero_once",
+        name: "track_ple_prepare_conv_fused2_residual_pair",
         inputNames: ["key", "query", "value", "keyScale", "queryScale", "convScale", "convState", "convW"],
         outputNames: ["full", "added"], source: fusedPrepareSource,
         header: TrackFastKernels.exactHeader + header, ensureRowContiguous: true)
