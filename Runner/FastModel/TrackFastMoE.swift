@@ -1237,13 +1237,7 @@ extension TrackFastMoEKernels {
         source: gateUpActSource, header: helpersCore + TrackFastKernels.exactHeader + regHelpers + wideDecls,
         ensureRowContiguous: true)
 
-    // MLXFAST-GUONESG: one output row per simdgroup. With RPS = 1 each group
-    // runs a single gate+up walk pair over K instead of two serial row pairs;
-    // the per-row fold order over k is unchanged, so act is bit-identical.
-    static let gateUpReuseRowsPerSimdgroup = 1
-    // Eight independent row owners share one threadgroup. This keeps the same
-    // total simdgroup count while quartering threadgroup scheduling granularity.
-    static let gateUpReuseSimdgroups = 8
+    static let gateUpReuseRowsPerSimdgroup = 2
 
     static let gateUpReuseHelpers = #"""
         template <typename T, int group_size, int bits, int rows>
@@ -1328,9 +1322,7 @@ extension TrackFastMoEKernels {
         const device uint32_t* uw = shared ? wsh + (size_t)N * kw : wu + eoff * kw;
         const device T* us = shared ? ssh + (size_t)N * kg : su + eoff * kg;
         const device T* ub = shared ? bsh + (size_t)N * kg : bu + eoff * kg;
-        // RPS output rows per simdgroup. Packing independent row owners changes
-        // only threadgroup scheduling; each group retains its complete row walk.
-        const int out_row = (int)threadgroup_position_in_grid.y * (SGS * RPS)
+        const int out_row = (int)threadgroup_position_in_grid.y * (2 * RPS)
             + (int)simdgroup_index_in_threadgroup * RPS;
         float g[RPS], u[RPS];
         qmv_fast_reg_dual<T, GS, BITS, RPS>(
@@ -1346,7 +1338,7 @@ extension TrackFastMoEKernels {
         """
 
     nonisolated(unsafe) static let gateUpReuseKernel = MLXFast.metalKernel(
-        name: "track_moe_gate_up_reuse_1row_8sg",
+        name: "track_moe_gate_up_reuse_2row",
         inputNames: ["wg", "sg", "bg", "wu", "su", "bu", "wsh", "ssh", "bsh", "x", "idx", "xrow"],
         outputNames: ["act"],
         source: gateUpReuseSource,
@@ -1366,15 +1358,13 @@ extension TrackFastMoEKernels {
             && groupSize == 32 && bits == 4 && shared.mode == .affine
         {
             let rows = gateUpReuseRowsPerSimdgroup
-            let simdgroups = gateUpReuseSimdgroups
-            precondition(N % (rows * simdgroups) == 0)
             return gateUpReuseKernel(
                 [wg, sg, bg, wu, su, bu, shared.weight, shared.scales, shared.biases!, x, idx, xrow],
                 template: [
                     ("T", x.dtype), ("GS", groupSize), ("BITS", bits), ("N", N),
-                    ("KD", KD), ("BR", BR), ("RPS", rows), ("SGS", simdgroups),
+                    ("KD", KD), ("BR", BR), ("RPS", rows),
                 ],
-                grid: (32, N / rows, BR + 1), threadGroup: (32, simdgroups, 1),
+                grid: (32, N / rows, BR + 1), threadGroup: (32, 2, 1),
                 outputShapes: [[BR + S, N]], outputDTypes: [x.dtype])[0]
         }
         return (S == 1 ? gateUpActKernel1 : gateUpActKernel)(
@@ -1528,13 +1518,21 @@ extension TrackFastMoEKernels {
         let BR = idx.dim(0), F = act.dim(1), H = wd.dim(1)
         let S = BR / topK
         precondition(BR % topK == 0 && H % 4 == 0 && bits == 4 && w.dtype == .float32 && S >= 1 && S <= 8)
-        precondition(act.dim(0) == BR + S && gate.dim(0) == S && sharedDown.rows == H && !isFast(k: F, n: H))
+        // MLXFAST-DCFAST: `isFast(k:n:)` is a pure function of F and H, both
+        // `let` bindings from `act.dim(1)` / `wd.dim(1)` that are never rebound
+        // here, and it was evaluated twice -- once for the precondition below
+        // and once as the `FAST` template value. Bind it once. Host-side only:
+        // the template receives the same Bool (the precondition asserts it is
+        // false), so the kernel selection, every template constant, the grid,
+        // the threadgroup shape and every byte moved are unchanged.
+        let fast = isFast(k: F, n: H)
+        precondition(act.dim(0) == BR + S && gate.dim(0) == S && sharedDown.rows == H && !fast)
         let ksg = topK % downCombineSimdgroups == 0 ? downCombineSimdgroups : 1
         let rps = S == 1 ? downRowsPerSimdgroup : 4
         let groups = ksg + (S == 1 && topK == 10 && ksg >= 5 ? 1 : 0)
         return (S == 1 ? downCombineKernel1 : downCombineKernel)(
             [wd, sd, bd, sharedDown.weight, sharedDown.scales, sharedDown.biases!, act, idx, w, gate],
-            template: [("T", act.dtype), ("GS", groupSize), ("BITS", bits), ("H", H), ("F", F), ("K", topK), ("FAST", isFast(k: F, n: H)), ("BR", BR), ("VPT", S), ("KSG", ksg), ("RPS", rps)],
+            template: [("T", act.dtype), ("GS", groupSize), ("BITS", bits), ("H", H), ("F", F), ("K", topK), ("FAST", fast), ("BR", BR), ("VPT", S), ("KSG", ksg), ("RPS", rps)],
             grid: (32, (H / rps) * groups, S), threadGroup: (32, groups, 1),
             outputShapes: [[S, H]], outputDTypes: [act.dtype])[0]
     }
