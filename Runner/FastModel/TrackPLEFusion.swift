@@ -194,6 +194,12 @@ enum TrackPLEFusion {
         outputNames: ["full", "added"], source: fusedPrepareSource,
         header: TrackFastKernels.exactHeader + header, ensureRowContiguous: true)
 
+    // These fixed output descriptors are consumed on every one-token PLE
+    // dispatch. Keep their array storage instead of rebuilding it per layer.
+    private static let fusedOutputShapes = [[1, 10, 10240], [1, 1, 10240]]
+    private static let prepareOutputShapes = [[1, 1, 10240], [1, 10, 10240]]
+    private static let singleOutputShape = [[1, 1, 10240]]
+
     static func supports(_ p: TrackPLE, stream: MLXArray, hidden: Int, hcCount: Int) -> Bool {
         // This predicate runs once per decode token. Avoid constructing shape
         // and membership arrays for the fixed geometry checks.
@@ -237,7 +243,7 @@ enum TrackPLEFusion {
                  p.normConvScale, convState, p.convW],
                 template: prepareTemplates(dtype: stream.dtype, eps: eps),
                 grid: (640, 4, 1), threadGroup: (640, 1, 1),
-                outputShapes: [[1, 10, 10240], [1, 1, 10240]],
+                outputShapes: fusedOutputShapes,
                 outputDTypes: [stream.dtype, stream.dtype])
             return (r[0], r[1], true)
         }
@@ -245,12 +251,12 @@ enum TrackPLEFusion {
             [key, stream, value, p.normKeyScale, p.normQueryScale, p.normConvScale, convState],
             template: prepareTemplates(dtype: stream.dtype, eps: eps),
             grid: (640, 4, 1), threadGroup: (640, 1, 1),
-            outputShapes: [[1, 1, 10240], [1, 10, 10240]],
+            outputShapes: prepareOutputShapes,
             outputDTypes: [stream.dtype, stream.dtype])
         let output = convolutionKernel(
             [r[1], p.convW, r[0]], template: [("InT", stream.dtype)],
             grid: (32, 1, 4 * 10240), threadGroup: (32, 1, 4),
-            outputShapes: [[1, 1, 10240]], outputDTypes: [stream.dtype])[0]
+            outputShapes: singleOutputShape, outputDTypes: [stream.dtype])[0]
         return (r[1], output, false)
     }
 }
