@@ -244,15 +244,17 @@ enum TrackPLEFusion {
         header: TrackFastKernels.exactHeader + header, ensureRowContiguous: true)
 
     static func supports(_ p: TrackPLE, stream: MLXArray, hidden: Int, hcCount: Int) -> Bool {
-        // Guard the exact geometry; every other path builds the original chain.
-        hidden == 2560 && hcCount == 4 && stream.shape == [1, 1, 10240]
-            && [.bfloat16, .float16, .float32].contains(stream.dtype)
+        // This predicate runs once per decode token. Spell the three fixed dtype
+        // and scale checks directly rather than constructing temporary arrays.
+        let dtype = stream.dtype
+        return hidden == 2560 && hcCount == 4 && stream.shape == [1, 1, 10240]
+            && (dtype == .bfloat16 || dtype == .float16 || dtype == .float32)
             && p.dilation == 3 && p.stateLength == 9
             && p.keyProj.rows == 10240 && p.valueProj.rows == 2560
-            && p.convW.shape == [10240, 4, 1] && p.convW.dtype == stream.dtype
-            && [p.normKeyScale, p.normQueryScale, p.normConvScale].allSatisfy {
-                $0.shape == [10240] && $0.dtype == stream.dtype
-            }
+            && p.convW.shape == [10240, 4, 1] && p.convW.dtype == dtype
+            && p.normKeyScale.shape == [10240] && p.normKeyScale.dtype == dtype
+            && p.normQueryScale.shape == [10240] && p.normQueryScale.dtype == dtype
+            && p.normConvScale.shape == [10240] && p.normConvScale.dtype == dtype
     }
 
     private static func prepareTemplates(dtype: DType, eps: Float)
