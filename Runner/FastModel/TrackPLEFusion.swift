@@ -20,6 +20,16 @@ enum TrackPLEFusion {
             threadgroup_barrier(mem_flags::mem_threadgroup);
             return acc;
         }
+        // The gated-value norm is the final scratch consumer, so it needs the
+        // producer/read barrier but not the reuse barrier on return.
+        METAL_FUNC float ple_row_sum_last(
+            float acc, threadgroup float* partials, uint lane, uint sg) {
+            acc = simd_sum(acc);
+            if (sg == 0 && lane >= 20) { partials[lane] = 0.0f; }
+            if (lane == 0) { partials[sg] = acc; }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            return simd_sum(partials[lane]);
+        }
         """
 
     static let prepareSource = """
@@ -89,7 +99,7 @@ enum TrackPLEFusion {
             acc += v * v;
         }
         const float iv = metal::precise::rsqrt(
-            ple_row_sum(acc, partials, lane, sg) / float(H) + eps);
+            ple_row_sum_last(acc, partials, lane, sg) / float(H) + eps);
         for (uint i = 0; i < 4; ++i) {
             InT n = InT(float(g[i]) * iv);
             full[9 * W + base + i] = n * convScale[base + i];
