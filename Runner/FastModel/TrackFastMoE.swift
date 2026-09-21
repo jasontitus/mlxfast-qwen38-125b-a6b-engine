@@ -2221,11 +2221,11 @@ extension TrackFastMoEKernels {
         float v_coeff[TN];
         const int thrN = simd_lid;           // SN == 32: thrM = 0
         const int simdM = simd_gid;          // SM == 1, BN == 1
-        const int bm = simdM * TM;
+        int bm = simdM * TM;
         int bn = thrN * TN;
-        // The host requires N % 16 == 0 and dispatches N / blockM exact
-        // threadgroups; the four SIMD groups therefore cover [0, N) exactly.
-        const int out_row = tid_x * blockM + bm;
+        int out_row = tid_x * blockM + bm;
+        if (out_row >= N) return;
+        out_row = out_row + TM <= N ? out_row : N - TM;
         const device T* mat = w + (size_t)out_row * (size_t)K;
         const int n_iter = K / blockN;
         // MLXFAST-ROUTERVEC4: both operand tiles are TN == 4 contiguous
