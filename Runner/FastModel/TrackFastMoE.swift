@@ -2216,7 +2216,7 @@ extension TrackFastMoEKernels {
 //       (GEMVKernel<float, BM=4, BN=1, SM=1, SN=32, TM=4, TN=4>, the
 //       parameters `gemv_axbpy` selects for a [512 x 2560] matrix and a
 //       2560-vector). Each row keeps that walk while the target shape assigns
-//       two rows per SIMD group. Reading bf16 weights instead of a float32
+//       one row per SIMD group. Reading bf16 weights instead of a float32
 //       copy preserves every product and partial sum.
 // The ranked geometry therefore permits aligned four-element operand loads.
 
