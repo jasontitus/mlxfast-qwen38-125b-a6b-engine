@@ -62,43 +62,16 @@ enum TrackFastKernels {
         };
         float thread_x[N_READS];
         float acc = 0.0f;
-        if constexpr (T == 1 && KC == 4) {
-            const uint ch0 = vec * 128 + lane * N_READS;
-            float cacc0 = 0.0f, cacc1 = 0.0f, cacc2 = 0.0f, cacc3 = 0.0f;
-            for (int j = 0; j < KM1; ++j) {
-                const metal::vec<InT, 4> xv =
-                    *reinterpret_cast<const device metal::vec<InT, 4>*>(
-                        cst_b + (uint)(j * CONV_DIM) + ch0);
-                cacc0 += static_cast<float>(xv[0]) * conv_w[(ch0 + 0) * KC + j];
-                cacc1 += static_cast<float>(xv[1]) * conv_w[(ch0 + 1) * KC + j];
-                cacc2 += static_cast<float>(xv[2]) * conv_w[(ch0 + 2) * KC + j];
-                cacc3 += static_cast<float>(xv[3]) * conv_w[(ch0 + 3) * KC + j];
+        for (int i = 0; i < N_READS; ++i) {
+            const uint ch = vec * 128 + lane * N_READS + i;
+            float cacc = 0.0f;
+            for (int j = 0; j < KC; ++j) {
+                cacc += win((int)t + j, ch) * conv_w[ch * KC + j];
             }
-            const metal::vec<InT, 4> xv =
-                *reinterpret_cast<const device metal::vec<InT, 4>*>(proj_b + ch0);
-            cacc0 += static_cast<float>(xv[0]) * conv_w[(ch0 + 0) * KC + KM1];
-            cacc1 += static_cast<float>(xv[1]) * conv_w[(ch0 + 1) * KC + KM1];
-            cacc2 += static_cast<float>(xv[2]) * conv_w[(ch0 + 2) * KC + KM1];
-            cacc3 += static_cast<float>(xv[3]) * conv_w[(ch0 + 3) * KC + KM1];
-            const float cacc[N_READS] = {cacc0, cacc1, cacc2, cacc3};
-            for (int i = 0; i < N_READS; ++i) {
-                const InT c0 = static_cast<InT>(cacc[i]);
-                const InT c1 = mlx_silu(c0);
-                thread_x[i] = static_cast<float>(c1);
-                acc += thread_x[i] * thread_x[i];
-            }
-        } else {
-            for (int i = 0; i < N_READS; ++i) {
-                const uint ch = vec * 128 + lane * N_READS + i;
-                float cacc = 0.0f;
-                for (int j = 0; j < KC; ++j) {
-                    cacc += win((int)t + j, ch) * conv_w[ch * KC + j];
-                }
-                const InT c0 = static_cast<InT>(cacc);
-                const InT c1 = mlx_silu(c0);
-                thread_x[i] = static_cast<float>(c1);
-                acc += thread_x[i] * thread_x[i];
-            }
+            const InT c0 = static_cast<InT>(cacc);
+            const InT c1 = mlx_silu(c0);
+            thread_x[i] = static_cast<float>(c1);
+            acc += thread_x[i] * thread_x[i];
         }
         if (vec < VEC_K) {
             acc = simd_sum(acc);
@@ -134,22 +107,10 @@ enum TrackFastKernels {
         if (CAPTURE || t == (uint)(T - 1)) {
             const uint slot = CAPTURE ? bt : b;
             device InT* o_conv = conv_out + (uint)(slot * KM1 * CONV_DIM);
-            if constexpr (T == 1) {
-                const uint ch0 = vec * 128 + lane * N_READS;
+            for (int i = 0; i < N_READS; ++i) {
+                const uint ch = vec * 128 + lane * N_READS + i;
                 for (int j = 0; j < KM1; ++j) {
-                    const device InT* src = j + 1 < KM1
-                        ? cst_b + (uint)((j + 1) * CONV_DIM) + ch0
-                        : proj_b + ch0;
-                    *reinterpret_cast<device metal::vec<InT, 4>*>(
-                        o_conv + (uint)(j * CONV_DIM) + ch0) =
-                        *reinterpret_cast<const device metal::vec<InT, 4>*>(src);
-                }
-            } else {
-                for (int i = 0; i < N_READS; ++i) {
-                    const uint ch = vec * 128 + lane * N_READS + i;
-                    for (int j = 0; j < KM1; ++j) {
-                        o_conv[(uint)(j * CONV_DIM) + ch] = static_cast<InT>(win((int)t + 1 + j, ch));
-                    }
+                    o_conv[(uint)(j * CONV_DIM) + ch] = static_cast<InT>(win((int)t + 1 + j, ch));
                 }
             }
         }
