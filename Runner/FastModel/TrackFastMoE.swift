@@ -1515,10 +1515,10 @@ extension TrackFastMoEKernels {
     /// fewer rows per threadgroup means more threadgroups in flight (H / rows).
     static let downRowsPerSimdgroup = 2
 
-    // MLXFAST-ONESG: one simdgroup per routed expert. With K = 10 and KSG = 10
-    // each group runs exactly one expert walk (kk loop trip count 1) instead of
-    // two serial walks; the per-row fold order over k is unchanged, so the
-    // output is bit-identical for any value.
+    // MLXFAST-ONESG: one SIMD group per routed expert. With K = 10 and KSG = 10,
+    // each group runs one expert walk that covers the tile's RPS rows; the
+    // pre-split KSG = 5 layout ran two experts serially per group. The per-row
+    // fold order over k is unchanged, so the output is bit-identical.
     static let downCombineSimdgroups =
         ProcessInfo.processInfo.environment["MLXFAST_MOE_DOWN_SIMDGROUPS"].flatMap { Int($0) } ?? 10
 
