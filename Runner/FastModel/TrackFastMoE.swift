@@ -2218,6 +2218,7 @@ extension TrackFastMoEKernels {
 //       2560-vector). Each row keeps that walk while the target shape assigns
 //       two rows per SIMD group. Reading bf16 weights instead of a float32
 //       copy preserves every product and partial sum.
+// The ranked geometry therefore permits aligned four-element operand loads.
 
 extension TrackFastMoEKernels {
     static let routerGemvSource = """
