@@ -1522,6 +1522,8 @@ extension TrackFastMoEKernels {
     /// MLXFAST-DOWNRPS: output rows per down+combine threadgroup in a one-token
     /// window. Each row's expert walks and the fold are unchanged for any value;
     /// fewer rows per threadgroup means more threadgroups in flight (H / rows).
+    /// The shared expert mirrors that ownership: one additional simdgroup per
+    /// one-token output row, rather than one group serializing both row walks.
     static let downRowsPerSimdgroup = 2
 
     // MLXFAST-ONESG: one simdgroup per routed expert. With K = 10 and KSG = 10
