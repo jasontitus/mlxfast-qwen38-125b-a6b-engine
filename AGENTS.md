@@ -15,6 +15,101 @@ Make the Qwen 3.8 125B A6B text tower decode and prefill faster on Apple
 Silicon. Do not change the observable model behavior beyond what the
 token-tolerance gate allows.
 
+## Optimization process — K-Search chooses; ktune controls
+
+`../ktune` is the authoritative campaign controller. **Use K-Search, not agent
+judgment, as the tool that chooses which optimizations to try.** K-Search is
+invoked through ktune's model-generation path; its job is to inspect the
+authenticated editing-base source, generate a materially diverse frontier, rank
+the actions against that source, the task, authenticated library, and retirement
+history, and choose the next mechanism. Do not replace
+that selection with conversational judgment, source inspection, commit
+history, or a manually registered experiment.
+
+The active controller is
+`../ktune/runs/mlxfast-qwen38-ktune-v51`. Its frozen config pins the exact
+promoted parent, current leader score and promotion threshold, authenticated
+optimization-library snapshot, immutable imported history snapshot, three
+K-Search frontier slots, candidate source scope, and balanced evaluation
+schedule. When a new run supersedes it, update this paragraph before candidate
+work resumes.
+
+Every candidate must follow this state machine:
+
+1. Verify the imported history with
+   `../ktune/.venv/bin/ktune history verify --snapshot
+   ../ktune/runs/mlxfast-qwen38-history-v17.json`, then inspect the active run with
+   `../ktune/.venv/bin/ktune status --run
+   ../ktune/runs/mlxfast-qwen38-ktune-v51`.
+2. The active run must use `search.generation_mode = model`. Run
+   `ktune propose`; K-Search must generate and rank the frontier and
+   `world.choose` must select the action before any source delta exists.
+   Authenticated history constrains K-Search and prevents repetition; it does
+   not authorize an agent to choose a candidate manually.
+3. Before source generation, the controller's fresh adversarial critic must
+   approve the selected action against the authenticated editing-base source,
+   retirement history, and receipt-verified same-run evidence. A rejection
+   commits its findings directly to K-Search feedback without retrieving
+   examples or calling the code model. Critic transport or schema failure leaves
+   the same selection retryable and spends no attempt.
+4. Generate candidate source only for a critic-approved K-Search-selected
+   action. A registered/imported edit may reproduce that already-selected
+   action, but an imported edit from model mode passes through the same critic
+   and must never bypass K-Search or choose the mechanism. Direct candidate
+   edits, source-led knob selection, unregistered environment sweeps, and
+   repeating a retired geometry are prohibited.
+5. Review the selected action and canonical candidate diff before approval.
+   Reject a candidate when the diff does not implement its action, repeats
+   authenticated retired work, or lacks a credible recurring single-pass
+   performance mechanism. A rejected source delta does not get built or run.
+6. Approve by content ID and evaluate only through the ktune backend. The
+   backend owns temporary source application, build provenance, exact
+   correctness, the predeclared paired schedule, workspace restoration, and
+   result attachment. Do not substitute an ad hoc benchmark command.
+7. Feed every result or source-review rejection back into the same K-Search
+   world before selecting another mechanism. Official Yukon results must be
+   imported into the same lineage and retirement memory before further work.
+
+Candidate source may be changed outside that controller only to repair the
+controller itself; such a repair is not a performance candidate and must not be
+benchmarked or submitted.
+
+Only an optimization demonstrated faster than the current challenge leader may
+be submitted. Before every Yukon submission, identify and record the current
+leader's commit and score, use that exact leader as the comparison parent, and
+complete the predeclared paired local schedule. A candidate that is slower,
+tied, or too noisy to establish a win over the current leader is retired, not
+submitted. Improvement over an older parent, a previous local baseline, or one
+favorable draw is never sufficient.
+
+After context compaction or agent handoff, re-read this section, the active
+ktune plan, and its cited evidence before taking any optimization action.
+
+### Incident record — ktune bypass on 2026-09-20/21
+
+The user explicitly required ktune-backed optimization on 2026-09-19. The last
+ktune library query before the failure was 2026-09-20 06:22:52 UTC. Candidate
+work then continued for 23 hours 8 minutes without another library retrieval,
+until the user identified the failure at 2026-09-21 05:31:17 UTC. Session
+history records 163 benchmark command invocations, 91 worker-build
+invocations, and 182 edit calls during that interval; these are invocation
+counts, not claims that every command completed successfully.
+
+After context compaction at 2026-09-21 03:46:52 UTC, the agent spent another
+1 hour 44 minutes selecting knobs directly from source and commit history. It
+repeated mechanisms already retired in the ktune ledger, including gate-up
+SIMD groups 2 to 4, down rows 2 to 1, and mixer split 4 to 3. This wasted
+approximately one day of the user's time and compute and produced no valid
+submission candidate.
+
+Root cause: the agent treated manually written files under a ktune run
+directory as sufficient campaign control and relied on conversational memory
+instead of enforcing ktune retrieval, registration, and retirement checks.
+Results from that unregistered interval are historical or quarantined evidence,
+not positive submission evidence. If the active ktune state is absent,
+unverified, or lost after compaction, stop optimization and restore it before
+editing or running a candidate.
+
 ## Authorities
 
 | Question | Authority |
