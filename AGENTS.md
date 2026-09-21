@@ -27,7 +27,7 @@ that selection with conversational judgment, source inspection, commit
 history, or a manually registered experiment.
 
 The active controller is
-`../ktune/runs/mlxfast-qwen38-ktune-v51`. Its frozen config pins the exact
+`../ktune/runs/mlxfast-qwen38-ktune-v54`. Its frozen config pins the exact
 promoted parent, current leader score and promotion threshold, authenticated
 optimization-library snapshot, immutable imported history snapshot, three
 K-Search frontier slots, candidate source scope, and balanced evaluation
@@ -40,7 +40,7 @@ Every candidate must follow this state machine:
    `../ktune/.venv/bin/ktune history verify --snapshot
    ../ktune/runs/mlxfast-qwen38-history-v17.json`, then inspect the active run with
    `../ktune/.venv/bin/ktune status --run
-   ../ktune/runs/mlxfast-qwen38-ktune-v51`.
+   ../ktune/runs/mlxfast-qwen38-ktune-v54`.
 2. The active run must use `search.generation_mode = model`. Run
    `ktune propose`; K-Search must generate and rank the frontier and
    `world.choose` must select the action before any source delta exists.
